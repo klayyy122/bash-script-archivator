@@ -1,14 +1,41 @@
 #!/bin/bash
 
+# to mb
+to_megabytes() {
+    local value=$1
+
+    value=$(echo "$value" | tr -d ' ')
+    
+    local num=$(echo "$value" | grep -oE '^[0-9]+(\.[0-9]+)?')
+    local unit=$(echo "$value" | grep -oE '[a-zA-Z]+$' | tr '[:upper:]' '[:lower:]')
+    
+    case $unit in
+        "k"|"kb") echo "$num / 1024" | bc -l ;;
+        "m"|"mb") echo "$num" ;;
+        "g"|"gb") echo "$num * 1024" | bc -l ;;
+        "t"|"tb") echo "$num * 1024 * 1024" | bc -l ;;
+        *) echo "$num" ;; 
+    esac
+}
+
 if [ $# -ne 4 ]; then
     echo "Usage: <path_to_log_dir> <limit> <N> <M>"
+    echo "Limit can be in KB, MB, GB, TB (e.g., 1G, 500M, 2.5GB)"
     exit 1
 fi
 
 DIR="$1"
-LIMIT="$2"
+LIMIT_INPUT="$2"
 N="$3"
 M="$4"
+
+
+LIMIT_MB=$(to_megabytes "$LIMIT_INPUT")
+
+LIMIT_MB=$(printf "%.0f" "$LIMIT_MB")
+
+echo "Original limit: $LIMIT_INPUT"
+echo "Limit in MB: $LIMIT_MB MB"
 
 while true; do
     if [ ! -d "$DIR" ]; then
@@ -23,20 +50,17 @@ while true; do
     fi
 done
 
-
 size=$(du -sm "$DIR" | cut -f1)
-echo "Raw size: ${size}M"
-echo "Limit: ${LIMIT}M"
 
-if [ "$LIMIT" -eq 0 ]; then
+if [ "$LIMIT_MB" -eq 0 ]; then
     echo "Error: Limit cannot be zero"
     exit 1
 fi
 
-ratio=$((size * 100 / LIMIT)) 
+ratio=$((size * 100 / LIMIT_MB)) 
+echo "Current size: $size MB"
+echo "Limit: $LIMIT_MB MB"
 echo "Fill ratio: $ratio%"
-
-echo "$DIR $LIMIT $N $M $size MB ($ratio% of limit)"
 
 BACKUP_DIR="${DIR}/backup"
 mkdir -p "$BACKUP_DIR"  
@@ -46,7 +70,7 @@ if [ $ratio -gt $N ]; then
     
     file_list=$(mktemp)
     
-    find "$DIR" -maxdepth 1 -type f -not -path "$BACKUP_DIR/*" -printf '%T@ %p\0' | \
+    find "$DIR" -maxdepth 4 -type f -not -path "$BACKUP_DIR/*" -printf '%T@ %p\0' | \
     sort -zn | head -zn $M | cut -zd' ' -f2- > "$file_list"
     
     if [ ! -s "$file_list" ]; then
@@ -70,19 +94,16 @@ if [ $ratio -gt $N ]; then
         echo "Archive created successfully: $archive_name"
         echo "Archive size: $(du -h "$archive_name" | cut -f1)"
         
-      
         echo "Removing original files..."
         while IFS= read -r -d '' file; do
             rm -f "$file"
         done < "$file_list"
         echo "Original files removed."
         
-       
         rm -f "$file_list"
         
-        
         new_size=$(du -sm "$DIR" | cut -f1)
-        new_percent=$((new_size * 100 / LIMIT))
+        new_percent=$((new_size * 100 / LIMIT_MB))
         echo "New size: $new_size MB ($new_percent%)"
     else
         echo "Error creating archive!"
